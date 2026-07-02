@@ -49,3 +49,15 @@ python main_solver_4.py
 # Run tests
 python test_mms.py
 python test_unit.py
+
+
+## Solver Workflow
+
+The simulation is performed using the following workflow:
+
+1. Generate the computational mesh for the selected mixer configuration.
+2. Solve the incompressible Stokes equations to compute the velocity and pressure fields.
+3. Solve the advection–diffusion equation using the computed velocity field.
+4. Evaluate the pressure drop across the channel.
+5. Compute the Coefficient of Variation (CoV) to assess mixing performance.
+6. Export simulation results for visualization and post-processing.
