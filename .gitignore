@@ -1,0 +1,30 @@
+# SSH Keys - NEVER COMMIT!
+*.pem
+*.key
+*.pub
+id_rsa*
+id_ed25519*
+.ssh/
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+*.egg-info/
+
+# Simulation outputs
+results/
+*.vtk
+*.vtu
+*.bp
+*.h5
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Virtual environments
+fenics_venv/
+venv/
+env/

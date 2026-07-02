@@ -1,0 +1,11 @@
+dolfinx
+mpi4py
+gmsh
+numpy
+ufl
+EOFcat > requirements.txt << EOF
+dolfinx
+mpi4py
+gmsh
+numpy
+ufl
