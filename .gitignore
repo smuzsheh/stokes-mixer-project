@@ -28,3 +28,4 @@ results/
 fenics_venv/
 venv/
 env/
+.git_backup/
