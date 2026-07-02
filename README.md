@@ -17,6 +17,16 @@ Simulations for **0, 4, and 6 obstacles**.
 
 ---
 
+## Project Objectives
+
+This project aims to:
+
+- Develop a finite element solver for coupled Stokes and advection–diffusion equations.
+- Simulate tracer transport in a two-dimensional static mixer.
+- Evaluate mixing performance using the Coefficient of Variation (CoV).
+- Analyze pressure drop across different mixer configurations.
+- Verify the numerical implementation using manufactured solutions and unit tests.
+
 ## 🧰 Dependencies
 
 - dolfinx (FEniCSx)
