@@ -37,6 +37,16 @@ This project aims to:
 
 ---
 
+
+## 🔮 Future Work
+
+Possible extensions of this project include:
+
+- Investigating additional static mixer geometries.
+- Extending the solver to three-dimensional simulations.
+- Studying non-Newtonian fluid models.
+- Performing simulations for different Reynolds and Peclet numbers.
+
 ## 🚀 How to Run
 
 ```bash
@@ -63,6 +73,4 @@ The simulation is performed using the following workflow:
 5. Compute the Coefficient of Variation (CoV) to assess mixing performance.
 6. Export simulation results for visualization and post-processing.
 
-
-
-
+  ---
