@@ -1,7 +1,7 @@
 """
-================================================================================
+
 METHOD OF MANUFACTURED SOLUTIONS (MMS) TEST WITH CONVERGENCE STUDY
-================================================================================
+
 
 Purpose:
     Verify that the Stokes + advection-diffusion solver is correctly implemented
@@ -25,20 +25,22 @@ How to run:
 """
 
 import numpy as np
+import ufl
 from mpi4py import MPI
 from dolfinx import fem, io, mesh as dmesh
 from dolfinx.fem.petsc import LinearProblem
 from ufl import (
     div, dx, grad, inner, TrialFunction, TestFunction, dot,
-    SpatialCoordinate, as_vector, sin, cos, pi,
+    SpatialCoordinate, as_vector, sin, cos, pi, sqrt,
+    CellDiameter, ds,
 )
 
 comm = MPI.COMM_WORLD
 
 
-# ============================================================================
+# ================================
 # PART 1: Manufactured Solutions
-# ============================================================================
+# ================================
 
 def u_exact(x):
     """Manufactured velocity: u = (sin(πy), 0)"""
@@ -60,9 +62,9 @@ def c_exact_numpy(x):
     return 1.0 + x[0]**2 + x[1]**2
 
 
-# ============================================================================
+# ========================
 # PART 2: Helper Functions
-# ============================================================================
+# ========================
 
 def compute_mesh_size(domain):
     """Compute the mesh size parameter h from the actual mesh."""
@@ -142,127 +144,127 @@ def compute_convergence_orders(errors_list):
     return orders
 
 
-# ============================================================================
+# ==================================
 # PART 3: Run MMS on a Single Mesh
-# ============================================================================
+# ==================================
 
-def run_mms_on_mesh(mesh_file):
-    """Run MMS test on a specific mesh file and return errors."""
-    if comm.rank == 0:
-        print(f"\n  Running on: {mesh_file}")
-    
-    # Load mesh
-    try:
-        mesh_data = io.gmsh.read_from_msh(mesh_file, comm, gdim=2)
-        domain = mesh_data.mesh
-        facet_tags = mesh_data.facet_tags
-    except Exception as e:
-        if comm.rank == 0:
-            print(f"    ERROR: Could not load mesh {mesh_file}")
-        return None
-    
-    # Function spaces: P2 for velocity, P1 for pressure, P2 for concentration
-    V = fem.functionspace(domain, ("Lagrange", 2, (2,)))   # Velocity P2
-    Q = fem.functionspace(domain, ("Lagrange", 1))         # Pressure P1
-    W = fem.functionspace(domain, ("Lagrange", 2))         # Concentration P2
-    
-    # Test and trial functions
+def run_mms_on_mesh(mesh_file, mode="polynomial_P2"):
+    # 1. Load mesh  ------------------------------------------------
+    mesh_data = io.gmsh.read_from_msh(mesh_file, comm, gdim=2)
+    domain = mesh_data.mesh
+    facet_tags = mesh_data.facet_tags
+
+    # 2. Function spaces  ------------------------------------------
+    V = fem.functionspace(domain, ("Lagrange", 2, (2,)))
+    Q = fem.functionspace(domain, ("Lagrange", 1))
+    W = fem.functionspace(domain,
+                          ("Lagrange", 2 if mode == "polynomial_P2" else 1))
+
+    # 3. Trial/test functions, coordinates, parameters  ------------
     u, v = TrialFunction(V), TestFunction(V)
     p, q = TrialFunction(Q), TestFunction(Q)
     c, w = TrialFunction(W), TestFunction(W)
-    
     x = SpatialCoordinate(domain)
-    
-    # Parameters
     nu = fem.Constant(domain, 1e-3)
-    D = fem.Constant(domain, 5e-4)
-    
-    # Manufactured solutions
+    D  = fem.Constant(domain, 5e-4)
+
+    # 4. Manufactured solutions + source terms  --------------------
     u_manu = u_exact(x)
     p_manu = p_exact(x)
-    c_manu = c_exact(x)
-    
-    # Source terms
-    f_stokes = -nu * div(grad(u_manu)) + grad(p_manu)
+    if mode == "polynomial_P2":
+        c_manu = 1.0 + x[0]**2 + x[1]**2
+        c_exact_np = lambda x: 1.0 + x[0]**2 + x[1]**2
+    else:
+        c_manu = sin(pi * x[0]) * cos(pi * x[1])
+        c_exact_np = lambda x: np.sin(np.pi * x[0]) * np.cos(np.pi * x[1])
+
+    f_stokes  = -nu * div(grad(u_manu)) + grad(p_manu)
     s_advdiff = dot(u_manu, grad(c_manu)) - div(D * grad(c_manu))
-    
-    # Boundary conditions
-    u_bc = fem.Function(V)
-    u_bc.interpolate(u_exact_numpy)
-    c_bc = fem.Function(W)
-    c_bc.interpolate(c_exact_numpy)
-    
+
+    # 5. BC functions  ---------------------------------------------
+    u_bc = fem.Function(V); u_bc.interpolate(u_exact_numpy)
+    c_bc = fem.Function(W); c_bc.interpolate(c_exact_np)
+    u_zero = fem.Function(V); u_zero.x.array[:] = 0.0
+
     fdim = domain.topology.dim - 1
     domain.topology.create_connectivity(fdim, domain.topology.dim)
-    boundary_facets = dmesh.locate_entities_boundary(
-        domain, fdim, lambda x: np.full(x.shape[1], True, dtype=bool)
-    )
-    
-    bc_u = fem.dirichletbc(u_bc, fem.locate_dofs_topological(V, fdim, boundary_facets))
-    bc_c = fem.dirichletbc(c_bc, fem.locate_dofs_topological(W, fdim, boundary_facets))
-    
-    # STOKES WEAK FORM
-    a_stokes = [
+
+    # 6. BC selection (branch on mode)  ----------------------------
+    if mode == "polynomial_P2":
+        # ... original Dirichlet-everywhere setup ...
+        boundary_terms_stokes = 0.0
+        boundary_terms_adv = 0.0
+    else:
+        # <<<<<<<<<<<< PASTE THE else BLOCK HERE >>>>>>>>>>>>
+        # (the full block given above)
+        # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+    # 7. Weak forms  -----------------------------------------------
+     a_stokes = [
         [nu * inner(grad(u), grad(v)) * dx, -p * div(v) * dx],
         [-q * div(u) * dx, None],
     ]
-    L_stokes = [inner(f_stokes, v) * dx, fem.Constant(domain, 0.0) * q * dx]
-    
-    # ADVECTION-DIFFUSION WEAK FORM
-    a_adv = D * dot(grad(c), grad(w)) * dx + dot(u_manu, grad(c)) * w * dx
-    L_adv = s_advdiff * w * dx
-    
-    # Solve Stokes
-    problem_stokes = LinearProblem(
-        a_stokes, L_stokes,
-        bcs=[bc_u],
-        kind="nest",
-        petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
-        petsc_options_prefix="mms_stokes_",
-    )
+    L_stokes = [
+        inner(f_stokes, v) * dx + boundary_terms_stokes,
+        fem.Constant(domain, 0.0) * q * dx,
+    ]
+
+    if mode == "polynomial_P2":
+        a_adv = D * dot(grad(c), grad(w)) * dx \
+                + dot(u_manu, grad(c)) * w * dx
+    else:
+        # SUPG-stabilized form
+        h_e = CellDiameter(domain)
+        u_mag = sqrt(dot(u_manu, u_manu)) + 1e-12
+        tau = 1.0 / sqrt((2.0 * u_mag / h_e)**2
+                         + (4.0 * D / h_e**2)**2)
+        residual_c = dot(u_manu, grad(c)) - div(D * grad(c))
+        a_adv = (
+            D * dot(grad(c), grad(w)) * dx
+            + dot(u_manu, grad(c)) * w * dx
+            + tau * dot(u_manu, grad(w)) * residual_c * dx
+        )
+
+    L_adv = s_advdiff * w * dx + boundary_terms_adv
+
+    # 8. Solve Stokes  ---------------------------------------------
+    problem_stokes = LinearProblem(a_stokes, L_stokes,
+                                   bcs=bcs_stokes, kind="nest",
+                                   petsc_options={"ksp_type": "preonly",
+                                                  "pc_type": "lu"},
+                                   petsc_options_prefix="mms_stokes_")
     uh, ph = problem_stokes.solve()
-    uh.x.scatter_forward()
-    ph.x.scatter_forward()
-    
-    # Fix pressure mean to zero
+    uh.x.scatter_forward(); ph.x.scatter_forward()
+
+    # 9. Fix pressure mean over WHOLE domain  ----------------------
     dx_domain = dx(domain=domain)
     volume = fem.assemble_scalar(fem.form(1 * dx_domain))
     p_mean = fem.assemble_scalar(fem.form(ph * dx_domain)) / volume
     ph.x.array[:] -= p_mean
     ph.x.scatter_forward()
-    
-    # Also fix the manufactured pressure to have zero mean
+
     p_manu_mean = fem.assemble_scalar(fem.form(p_manu * dx_domain)) / volume
     p_manu_zero_mean = p_manu - p_manu_mean
-    
-    # Solve Advection-Diffusion
-    problem_adv = LinearProblem(
-        a_adv, L_adv,
-        bcs=[bc_c],
-        petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
-        petsc_options_prefix="mms_advdiff_",
-    )
+
+    # 10. Solve advection-diffusion  -------------------------------
+    problem_adv = LinearProblem(a_adv, L_adv,
+                                bcs=bcs_adv,
+                                petsc_options={"ksp_type": "preonly",
+                                               "pc_type": "lu"},
+                                petsc_options_prefix="mms_advdiff_")
     ch = problem_adv.solve()
     ch.x.scatter_forward()
-    
-    # Compute errors
+
+    # 11. Errors  --------------------------------------------------
     h_actual = compute_mesh_size(domain)
-    errors = compute_errors(domain, uh, ph, ch, u_manu, p_manu_zero_mean, c_manu)
+    errors = compute_errors(domain, uh, ph, ch,
+                            u_manu, p_manu_zero_mean, c_manu)
     errors["h"] = h_actual
-    errors["dofs"] = V.dofmap.index_map.size_local + Q.dofmap.index_map.size_local + W.dofmap.index_map.size_local
-    
-    if comm.rank == 0:
-        print(f"    h = {errors['h']:.6f}, DOFs = {errors['dofs']}")
-        print(f"    Velocity L2: {errors['velocity_L2']:.6e}")
-        print(f"    Pressure L2: {errors['pressure_L2']:.6e}")
-        print(f"    Concentration L2: {errors['concentration_L2']:.6e}")
-    
+    errors["mode"] = mode
     return errors
-
-
-# ============================================================================
+# =======================
 # PART 4: Print Results
-# ============================================================================
+# =======================
 
 def print_results(all_errors, orders):
     """Print convergence tables and summary."""
@@ -407,61 +409,24 @@ def print_results(all_errors, orders):
     print("="*90)
 
 
-# ============================================================================
+# ======================
 # PART 5: Main Program
-# ============================================================================
+# ======================
 
 def run_convergence_study():
-    """Run MMS on a sequence of refined meshes and compute convergence orders."""
-    if comm.rank == 0:
-        print("\n" + "="*90)
-        print("MMS CONVERGENCE STUDY: Stokes + Advection-Diffusion Solver")
-        print("="*90)
-        print("Manufactured Solutions:")
-        print("  u = (sin(πy), 0)")
-        print("  p = cos(πx)")
-        print("  c = 1 + x² + y²")
-        print("="*90)
-        print("Boundary Conditions:")
-        print("  - Velocity: Dirichlet on all boundaries")
-        print("  - Pressure: Natural (mean fixed to zero)")
-        print("  - Concentration: Dirichlet on all boundaries")
-        print("="*90)
-    
-    mesh_sequence = [
-        "dfg_benchmark_4obstacles_coarse.msh",
-        "dfg_benchmark_4obstacles_medium.msh",
-        "dfg_benchmark_4obstacles_fine.msh",
-        "dfg_benchmark_4obstacles_veryfine.msh",
-    ]
-    
-    import os
-    actual_meshes = [m for m in mesh_sequence if os.path.exists(m)]
-    
-    if len(actual_meshes) == 0:
+    ...
+    for mode in ("polynomial_P2", "trig_P1"):
         if comm.rank == 0:
-            print("\nNo refined meshes found. Please generate them first:")
-            print("  gmsh dfg_benchmark_4obstacles.geo -2 -clscale 2.0 -o dfg_benchmark_4obstacles_coarse.msh")
-            print("  gmsh dfg_benchmark_4obstacles.geo -2 -clscale 1.0 -o dfg_benchmark_4obstacles_medium.msh")
-            print("  gmsh dfg_benchmark_4obstacles.geo -2 -clscale 0.5 -o dfg_benchmark_4obstacles_fine.msh")
-            print("  gmsh dfg_benchmark_4obstacles.geo -2 -clscale 0.25 -o dfg_benchmark_4obstacles_veryfine.msh")
-        return
-    
-    all_errors = []
-    for mesh_file in actual_meshes:
-        errors = run_mms_on_mesh(mesh_file)
-        if errors is not None:
-            all_errors.append(errors)
-    
-    if len(all_errors) == 0:
-        if comm.rank == 0:
-            print("\nNo meshes could be loaded. Exiting.")
-        return
-    
-    all_errors.sort(key=lambda x: x["h"], reverse=True)
-    orders = compute_convergence_orders(all_errors)
-    print_results(all_errors, orders)
-
-
-if __name__ == "__main__":
-    run_convergence_study()
+            print("\n" + "=" * 90)
+            print(f"MMS MODE: {mode}")
+            print("=" * 90)
+        all_errors = []
+        for mesh_file in actual_meshes:
+            errors = run_mms_on_mesh(mesh_file, mode=mode)
+            if errors is not None:
+                all_errors.append(errors)
+        if len(all_errors) == 0:
+            continue
+        all_errors.sort(key=lambda x: x["h"], reverse=True)
+        orders = compute_convergence_orders(all_errors)
+        print_results(all_errors, orders)

@@ -11,12 +11,21 @@ from dolfinx import fem, io, geometry, mesh as dmesh
 from dolfinx.fem.petsc import LinearProblem
 from ufl import div, dx, grad, inner, TrialFunction, TestFunction, dot
 from pathlib import Path
+from ufl import sqrt, CellDiameter, div, dot, grad, dx
 
 comm = MPI.COMM_WORLD
 
 
 
 # MESH (6 obstacles)
+OBSTACLES_6 = [
+    (0.30, 0.20),
+    (0.55, 0.27),
+    (0.80, 0.13),
+    (1.05, 0.20),
+    (1.30, 0.27),
+    (1.55, 0.13),
+]
 
 mesh_data = io.gmsh.read_from_msh("dfg_benchmark_6obstacles.msh", comm, gdim=2)
 domain = mesh_data.mesh
@@ -76,42 +85,86 @@ def get_pressure_at_point(ph, point):
         except:
             pass
     return None
+from dolfinx import mesh as dmesh
+from dolfinx.fem import assemble_scalar, form
+import ufl
 
 
-def compute_CoV_from_simulation(ch, x_position):
-    y_pts = np.linspace(0.0, 0.41, 500)
-    pts = np.column_stack([
+def compute_CoV_from_simulation(ch, x_position, domain, obstacle_centers=None,
+                                obstacle_radius=0.04, n_samples=2000,
+                                c_global_mean=0.5):
+    """
+    Compute the Coefficient of Variation on the vertical cross-section
+    x = x_position. The mean in the denominator is the GLOBAL mean
+    concentration, which is conserved by the advection-diffusion
+    equation (zero diffusive flux at walls and obstacles).
+
+    Parameters
+    ----------
+    ...
+    c_global_mean : float
+        Global mean concentration. For the inlet split used here,
+        c_global_mean = 0.5.
+    """
+    from dolfinx import geometry as geom
+
+    y_pts = np.linspace(0.0, 0.41, n_samples)
+
+    if obstacle_centers is not None:
+        mask = np.ones_like(y_pts, dtype=bool)
+        for (cx, cy) in obstacle_centers:
+            if abs(cx - x_position) < obstacle_radius + 0.005:
+                arg = obstacle_radius**2 - (cx - x_position)**2
+                if arg > 0:
+                    dy = np.sqrt(arg)
+                    mask &= ~((y_pts >= cy - dy) & (y_pts <= cy + dy))
+        y_pts = y_pts[mask]
+
+    if len(y_pts) < 20:
+        return None
+
+    points = np.column_stack([
         np.full(len(y_pts), x_position),
         y_pts,
         np.zeros(len(y_pts)),
-    ])
-    
-    cells_candidate = geometry.compute_collisions_points(_bb_tree, pts)
-    c_values = []
-    
+    ]).astype(np.float64)
+
+    bb_tree = geom.bb_tree(domain, domain.topology.dim)
+    cells = geom.compute_collisions_points(bb_tree, points)
+
+    c_values = np.full(len(y_pts), np.nan)
     for i in range(len(y_pts)):
-        links = cells_candidate.links(i)
+        links = cells.links(i)
         if len(links) > 0:
-            cell = links[0]
             try:
-                val = float(ch.eval(pts[i:i+1], [cell]).flatten()[0])
-                c_values.append(val)
-            except:
+                val = ch.eval(points[i:i + 1], [links[0]])
+                c_values[i] = float(val.flatten()[0])
+            except Exception:
                 pass
-    
-    if len(c_values) < 50:
+
+    valid = ~np.isnan(c_values)
+    if np.sum(valid) < 20:
         return None
-    
-    mean = np.mean(c_values)
-    std = np.std(c_values)
-    
-    if mean > 1e-12:
-        return float(std / mean)
-    else:
-        return 1.0
 
+    y_valid = y_pts[valid]
+    c_valid = np.clip(c_values[valid], 0.0, 1.0)
 
+    L = np.trapezoid(np.ones_like(y_valid), y_valid)
+    if L < 1e-14:
+        return None
 
+    # LOCAL mean (for the standard deviation only)
+    c_local_mean = np.trapezoid(c_valid, y_valid) / L
+    c2_mean = np.trapezoid(c_valid**2, y_valid) / L
+
+    var = c2_mean - c_local_mean**2
+    var = max(var, 0.0)
+    std = np.sqrt(var)
+
+    # GLOBAL mean in the denominator (conserved, = 0.5 by construction)
+    if c_global_mean < 1e-12:
+        return None
+    return float(std / c_global_mean)
 # STOKES PROBLEM
 
 degree = 1
@@ -198,7 +251,7 @@ if comm.rank == 0:
 
 # ADVECTION-DIFFUSION (Highly Viscous Newtonian Fluids)
 
-# HIGHLY VISCOUS PARAMETERS - SAME AS 4 AND 12 OBSTACLES!
+# HIGHLY VISCOUS PARAMETERS - SAME AS 4 AND 6 OBSTACLES!
 nu_cold, nu_hot = 0.1, 0.01  # Highly viscous (toothpaste-like)
 nu.value = (nu_cold + nu_hot) / 2.0
 
@@ -220,7 +273,27 @@ fdim = domain.topology.dim - 1
 domain.topology.create_connectivity(fdim, domain.topology.dim)
 bc_c = fem.dirichletbc(c_D, fem.locate_dofs_topological(W, fdim, facet_tags.find(1)))
 
-a_c = diffusivity * dot(grad(c), grad(w)) * dx + dot(uh_lu, grad(c)) * w * dx
+
+
+# Element size (UFL CellDiameter works element-wise on P1 and P2 spaces)
+h_e = CellDiameter(domain)
+
+# Velocity magnitude (regularized to avoid division by zero)
+u_mag = sqrt(dot(uh_lu, uh_lu)) + 1e-12
+
+# SUPG stabilization parameter (Brooks & Hughes 1982)
+# Doubly-asymptotic form: correct in both advection- and diffusion-dominated limits
+tau = 1.0 / sqrt((2.0 * u_mag / h_e) ** 2 + (4.0 * diffusivity / h_e ** 2) ** 2)
+
+# Strong-form residual of the advection-diffusion equation
+residual_c = dot(uh_lu, grad(c)) - diffusivity * div(grad(c))
+
+# SUPG-stabilized weak form
+a_c = (
+    diffusivity * dot(grad(c), grad(w)) * dx
+    + dot(uh_lu, grad(c)) * w * dx
+    + tau * dot(uh_lu, grad(w)) * residual_c * dx
+)
 L_c = fem.Constant(domain, 0.0) * w * dx
 
 problem_c = LinearProblem(a_c, L_c, bcs=[bc_c], petsc_options={
@@ -256,7 +329,7 @@ if comm.rank == 0:
     x_positions = [0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1.0, 1.15, 1.3, 1.45, 1.6, 1.75, 1.9]
     
     for x in x_positions:
-        cov = compute_CoV_from_simulation(ch, x)
+        cov = compute_CoV_from_simulation(ch, x, domain,obstacle_centers=OBSTACLES_6)
         if cov is not None:
             if cov < 0.05:
                 interp = "Well mixed ✓"
@@ -270,7 +343,7 @@ if comm.rank == 0:
         else:
             print(f"x = {x:.2f}:    CoV = Could not compute")
     
-    cov_outlet = compute_CoV_from_simulation(ch, 1.9)
+    cov_outlet = compute_CoV_from_simulation(ch, 1.9,domain,obstacle_centers=OBSTACLES_6)
     print("\n" + "="*50)
     print("CONCLUSION")
     print("="*50)

@@ -1,6 +1,6 @@
 """
 Course Project: Stokes flow + tracer transport (advection–diffusion)
-KENICS MIXER — 4 obstacles
+KENICS MIXER — 2 obstacles
 HIGHLY VISCOUS NEWTONIAN FLUID
 """
 
@@ -17,17 +17,12 @@ comm = MPI.COMM_WORLD
 
 
 # ================================================================
-# MESH (4 obstacles)
+# MESH (2 obstacles)
 # ================================================================
 
-OBSTACLES_4 = [
-    (0.45, 0.20),
-    (0.85, 0.27),
-    (1.25, 0.13),
-    (1.65, 0.20),
-]
+OBSTACLES_2 = [(0.55, 0.20), (1.45, 0.20)]
 
-mesh_data = io.gmsh.read_from_msh("dfg_benchmark_4obstacles.msh", comm, gdim=2)
+mesh_data = io.gmsh.read_from_msh("dfg_benchmark_2obstacles.msh", comm, gdim=2)
 domain = mesh_data.mesh
 facet_tags = mesh_data.facet_tags
 
@@ -36,7 +31,7 @@ if comm.rank == 0:
     print(f"Obstacle facets found: {len(obstacle_facets)}")
     print(f"Mesh loaded")
 
-results_folder = Path("results_4")
+results_folder = Path("results_2")
 results_folder.mkdir(exist_ok=True, parents=True)
 
 
@@ -320,12 +315,12 @@ if comm.rank == 0:
     p_out = get_pressure_at_point(ph_lu, (2.15, 0.2, 0.0))
 
     print("\n" + "=" * 50)
-    print(f"PRESSURE ANALYSIS (4 Obstacles)")
+    print(f"PRESSURE ANALYSIS (2 Obstacles)")
     print("=" * 50)
     print(f"Inlet pressure:  {p_in:.8f} Pa")
     print(f"Outlet pressure: {p_out:.8f} Pa")
     print(f"\nPressure difference: {p_in - p_out:.6f} Pa")
-    print(f"Pressure drop per obstacle: {(p_in - p_out) / 4:.6f} Pa")
+    print(f"Pressure drop per obstacle: {(p_in - p_out) / 2:.6f} Pa")
 
     print("\n" + "=" * 50)
     print("CoV FROM SIMULATION")
@@ -337,7 +332,7 @@ if comm.rank == 0:
 
     for x in x_positions:
         cov = compute_CoV_from_simulation(ch, x, domain,
-                                          obstacle_centers=OBSTACLES_4)
+                                          obstacle_centers=OBSTACLES_2)
         if cov is not None:
             if cov < 0.05:
                 interp = "Well mixed"
@@ -352,13 +347,13 @@ if comm.rank == 0:
             print(f"x = {x:.2f}:    CoV = Could not compute")
 
     cov_outlet = compute_CoV_from_simulation(ch, 1.9, domain,
-                                             obstacle_centers=OBSTACLES_4)
+                                             obstacle_centers=OBSTACLES_2)
 
     print("\n" + "=" * 50)
     print("CONCLUSION")
     print("=" * 50)
     print(f"Total pressure drop: {p_in - p_out:.6f} Pa")
-    print(f"Pressure drop per element: {(p_in - p_out) / 4:.6f} Pa")
+    print(f"Pressure drop per element: {(p_in - p_out) / 2:.6f} Pa")
     if cov_outlet is not None:
         if cov_outlet < 0.05:
             print(f"Outlet CoV: {cov_outlet:.6f} (Well mixed)")
@@ -385,4 +380,4 @@ with io.VTXWriter(comm, results_folder / "advection_diffusion.bp", [ch]) as vtx:
     vtx.write(0.0)
 
 if comm.rank == 0:
-    print("\nFiles written to results_4/")
+    print("\nFiles written to results_2/")
