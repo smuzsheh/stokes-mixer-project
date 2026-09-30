@@ -1,76 +1,79 @@
-# Static Mixer Simulation
+# 2D Stokes Flow and Advection–Diffusion in Static Mixers
 
-**Author:** Uzma Shehzadi , Hamna Shafique
-**Supervisor:** Dr. Timm Treskatis  
-**Institution:** TU Dortmund
+**Authors:** Uzma Shehzadi, Hamna Shafique
+**Supervisor:** Dr. Timm Treskatis
+**Institution:** TU Dortmund University, Faculty of Mathematics
 
----
+## Overview
 
-## 📌 Project Description
+This project implements a finite element solver for coupled, steady
+Stokes flow and advection–diffusion transport in a two-dimensional
+channel containing an array of cylindrical obstacles. The obstacles
+introduce laminar recirculation and stretching rather than the
+crossed-element stream-division mechanism used in commercial Kenics-
+or SMX-type static mixers, so the geometry studied here is best
+described as an **obstacle-array micromixer**, not a Kenics-type
+mixer. Pressure drop and mixing quality (via the Coefficient of
+Variation, CoV) are evaluated across five configurations, with
+**0, 2, 4, 6, and 8 obstacles**.
 
-2D Stokes flow and advection-diffusion simulations for a Kenics-type static mixer. Investigates mixing of two highly viscous Newtonian fluids by computing:
+## Key Objectives
 
-- Pressure drop
-- Coefficient of Variation (CoV)
+- Implement a Taylor–Hood ($P_2$/$P_1$) finite element solver for the
+  steady Stokes equations, coupled one-way to an SUPG-stabilised
+  advection–diffusion solver for tracer transport.
+- Simulate tracer transport and quantify mixing quality via the CoV
+  metric for each configuration (0, 2, 4, 6, 8 obstacles).
+- Quantify the pressure drop across the same five configurations.
+- Verify the implementation using the Method of Manufactured
+  Solutions (MMS) and unit testing.
 
-Simulations for **0, 4, and 6 obstacles**.
+## Repository Structure
 
----
+| Path | Description |
+|---|---|
+| `main_solver_{0,2,4,6,8}.py` | Stokes + advection–diffusion solver for each obstacle count |
+| `dfg_benchmark_{0,2,4,6,8}obstacles.geo/.msh` | Gmsh geometry and mesh files for each configuration |
+| `test_mms.py` | Method of Manufactured Solutions convergence tests |
+| `test_unit.py` | Unit tests for individual solver components |
+| `results_{0,2,4,6,8}/` | Output (fields, figures, CoV/pressure data) for each configuration |
+| `requirements.txt` | Pinned Python package versions for a reproducible environment |
 
-## Project Objectives
-
-This project aims to:
-
-- Develop a finite element solver for coupled Stokes and advection–diffusion equations.
-- Simulate tracer transport in a two-dimensional static mixer.
-- Evaluate mixing performance using the Coefficient of Variation (CoV).
-- Analyze pressure drop across different mixer configurations.
-- Verify the numerical implementation using manufactured solutions and unit tests.
-
-## 🧰 Dependencies
+## Required Dependencies
 
 - dolfinx (FEniCSx)
 - mpi4py
+- PETSc
 - gmsh
 - numpy
 - ufl
 
----
-
-
-## 🔮 Future Work
-
-Possible extensions of this project include:
-
-- Investigating additional static mixer geometries.
-- Extending the solver to three-dimensional simulations.
-- Studying non-Newtonian fluid models.
-- Performing simulations for different Reynolds and Peclet numbers.
-
-## 🚀 How to Run
+Exact, pinned versions are listed in `requirements.txt`; install them
+with:
 
 ```bash
-# Generate mesh
-gmsh dfg_benchmark_4obstacles.geo -2 -o dfg_benchmark_4obstacles.msh
+pip install -r requirements.txt
+```
 
-# Run simulation
-python main_solver_4.py
+## Execution Steps
 
-# Run tests
-python test_mms.py
-python test_unit.py
-'''
+1. Generate the mesh for a given configuration from its `.geo` file
+   using Gmsh (or use the provided `.msh` file directly).
+2. Run the corresponding solver script, e.g.:
+   ```bash
+   python3 main_solver_4.py
+   ```
+3. (Optional) Run the verification suite:
+   ```bash
+   python3 test_mms.py
+   python3 test_unit.py
+   ```
+4. Results (fields, CoV, pressure-drop data, and figures) are written
+   to the matching `results_*` directory.
 
----
-## Solver Workflow
+## Planned Enhancements
 
-The simulation is performed using the following workflow:
-
-1. Generate the computational mesh for the selected mixer configuration.
-2. Solve the incompressible Stokes equations to compute the velocity and pressure fields.
-3. Solve the advection–diffusion equation using the computed velocity field.
-4. Evaluate the pressure drop across the channel.
-5. Compute the Coefficient of Variation (CoV) to assess mixing performance.
-6. Export simulation results for visualization and post-processing.
-
-  ---
+Future work includes implementing SMX-style crossed-element
+geometries (which introduce true stream division), extending to
+three-dimensional and unsteady flow, and incorporating non-Newtonian
+fluid behaviour across a range of Reynolds and Péclet numbers.
